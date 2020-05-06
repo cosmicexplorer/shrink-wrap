@@ -3,7 +3,7 @@
 ;; Author: Danny McClanahan
 ;; Version: 0.1
 ;; URL: https://github.com/cosmicexplorer/shrink-wrap
-;; Package-Requires: ()
+;; Package-Requires: ((emacs "25") (cl-lib "0.5") (dash "2.13.0"))
 ;; Keywords: indent, indentation, offset, tab, space, view, shrink, minor-mode, visual
 
 ;; This file is not part of GNU Emacs.
@@ -35,6 +35,15 @@
 
 ;;; Code:
 
+(require 'cl-lib)
+(require 'rx)
+
+
+;; Customization helpers
+(defun shrink-wrap--always-safe-local (_)
+  "Use as a :safe predicate in a `defcustom' form to accept any local override."
+  t)
+
 
 ;; Customization
 (defgroup shrink-wrap nil
@@ -45,9 +54,66 @@
   :type 'string
   :group 'shrink-wrap)
 
+(defcustom shrink-wrap-explicit-indentation nil
+  "An explicit indentation schema for the current file. Can be set as a dir-local."
+  :type 'string
+  :safe #'shrink-wrap--always-safe-local
+  :group 'shrink-wrap)
+
+
+;; Buffer-local variables
+(defvar-local shrink-wrap--canonical-space-for-file nil
+  "The guessed indentation schema of the current file. Can be set explicitly if guessing fails.")
+
+
+;; Constants
+(defconst shrink-wrap--leading-space-regexp
+  (rx (+ blank)))
+
+(defconst shrink-wrap--atomic-indent-widths
+  `((? . 2)
+    (?	. 1))
+  "Given a single char, describe how long the expected indent widths are.
+
+For example, a single tab character produces a single indentation. But in general most people using
+spaces will move in increments of 2.")
+
 
 ;; Logic
-()
+(defun shrink-wrap--get-leading-spaces ()
+  (beginning-of-line)
+  (looking-at shrink-wrap--leading-space-regexp))
+
+(defun shrink-wrap--repeat-string (count str)
+  (cl-loop for i from 1 upto count
+           with start = ""
+           do (setq start (concat start str))
+           finally return start))
+
+(defun shrink-wrap--calculate-corrected-indentation (leading-spaces)
+  (cl-check-type leading-spaces string)
+  (cl-assert (> (length leading-spaces) 0))
+  (let* ((space-char (aref leading-spaces 0))
+         (atomic-width (alist-get space-char shrink-wrap--atomic-indent-widths)))
+    (--> (/ (length leading-spaces) atomic-width)
+         (+ it (% (length leading-spaces) atomic-width))
+         (shrink-wrap--repeat-string it shrink-wrap-desired-indentation)
+         (propertize leading-spaces 'display it))))
+
+(defun shrink-wrap--invisify-buffer ()
+  (let ((prev-modified-p (buffer-modified-p)))
+    (setq shrink-wrap--canonical-space-for-file shrink-wrap-explicit-indentation)
+    (goto-char (point-min))
+    (cl-loop until (eobp)
+             do (progn
+                  (when (shrink-wrap--get-leading-spaces)
+                    (let ((leading-spaces (match-string 0)))
+                      (put-text-property
+                       (match-beginning 0) (match-end 0)
+                       'display
+                       (shrink-wrap--calculate-corrected-indentation leading-spaces))))
+                  (forward-line 1)))
+    (set-buffer-modified-p prev-modified-p)))
 
 
 ;; Keymaps
@@ -60,7 +126,8 @@
 ;; Minor modes
 (defun shrink-wrap-mode--turn-on ()
   "Turn on `shrink-wrap-mode'."
-  (shrink-wrap-mode 1))
+  (unless buffer-read-only
+    (shrink-wrap-mode 1)))
 
 ;;;###autoload
 (define-minor-mode shrink-wrap-mode
@@ -75,7 +142,9 @@ files with multiple indentation levels, but we should make a good effort to supp
   :global t
   :group 'shrink-wrap
   :lighter " >|<"
-  :keymap shrink-wrap-map)
+  :keymap shrink-wrap-map
+
+  (save-excursion (shrink-wrap--invisify-buffer)))
 
 ;;;###autoload
 (define-globalized-minor-mode global-shrink-wrap-mode shrink-wrap-mode shrink-wrap-mode--turn-on)
