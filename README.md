@@ -3,6 +3,13 @@ shrink-wrap
 
 An emacs minor mode that makes all indentation look the way you want it to.
 
+# Documentation
+## `defcustom`
+- `shrink-wrap-desired-indentation`: ???
+
+## `defun`
+- `shrink-wrap-mode` -- modifies the presentation of leading space characters on each line to display the desired number and type of space characters per indent depth.
+
 # TODO
 - [ ] ?
 
