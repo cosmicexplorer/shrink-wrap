@@ -49,7 +49,7 @@
 (defgroup shrink-wrap nil
   "Group for `shrink-wrap' customizations.")
 
-(defcustom shrink-wrap-desired-indentation "  "
+(defcustom shrink-wrap-desired-indentation " "
   "The indentation specification for the `shrink-wrap-mode' minor mode to emulate!"
   :type 'string
   :group 'shrink-wrap)
@@ -84,12 +84,6 @@ spaces will move in increments of 2.")
   (beginning-of-line)
   (looking-at shrink-wrap--leading-space-regexp))
 
-(defun shrink-wrap--repeat-string (count str)
-  (cl-loop for i from 1 upto count
-           with start = ""
-           do (setq start (concat start str))
-           finally return start))
-
 (defun shrink-wrap--calculate-corrected-indentation (leading-spaces)
   (cl-check-type leading-spaces string)
   (cl-assert (> (length leading-spaces) 0))
@@ -97,11 +91,10 @@ spaces will move in increments of 2.")
          (atomic-width (alist-get space-char shrink-wrap--atomic-indent-widths)))
     (--> (/ (length leading-spaces) atomic-width)
          (+ it (% (length leading-spaces) atomic-width))
-         (shrink-wrap--repeat-string it shrink-wrap-desired-indentation)
-         (propertize leading-spaces 'display it))))
+         `(space :relative-width ,it))))
 
 (defun shrink-wrap--invisify-buffer ()
-  (let ((prev-modified-p (buffer-modified-p)))
+  (with-silent-modifications
     (setq shrink-wrap--canonical-space-for-file shrink-wrap-explicit-indentation)
     (goto-char (point-min))
     (cl-loop until (eobp)
@@ -112,8 +105,17 @@ spaces will move in increments of 2.")
                        (match-beginning 0) (match-end 0)
                        'display
                        (shrink-wrap--calculate-corrected-indentation leading-spaces))))
-                  (forward-line 1)))
-    (set-buffer-modified-p prev-modified-p)))
+                  (forward-line 1)))))
+
+(defun shrink-wrap--strip-display-properties-from-buffer ()
+  "Clean up the modifications we've made to the buffer."
+  ;; TODO: This should probably try to look up the text we've added in some buffer-local table
+  ;; instead of just deleting all the display properties, which may break some major modes.
+  (with-silent-modifications
+    (put-text-property
+     (point-min)
+     (point-max)
+     'display nil)))
 
 
 ;; Keymaps
@@ -126,7 +128,8 @@ spaces will move in increments of 2.")
 ;; Minor modes
 (defun shrink-wrap-mode--turn-on ()
   "Turn on `shrink-wrap-mode'."
-  (unless buffer-read-only
+  (when (and (derived-mode-p 'prog-mode)
+             (not buffer-read-only))
     (shrink-wrap-mode 1)))
 
 ;;;###autoload
@@ -144,7 +147,9 @@ files with multiple indentation levels, but we should make a good effort to supp
   :lighter " >|<"
   :keymap shrink-wrap-map
 
-  (save-excursion (shrink-wrap--invisify-buffer)))
+  (if shrink-wrap-mode
+      (shrink-wrap--strip-display-properties-from-buffer)
+    (save-excursion (shrink-wrap--invisify-buffer))))
 
 ;;;###autoload
 (define-globalized-minor-mode global-shrink-wrap-mode shrink-wrap-mode shrink-wrap-mode--turn-on)
